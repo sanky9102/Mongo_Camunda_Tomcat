@@ -1,0 +1,85 @@
+- name: Install and Configure Tomcat
+  hosts: all
+  become: yes
+  vars:
+    tomcat_version: "9.0.80"  # Update as necessary
+    tomcat_install_dir: "/opt/tomcat"  # Update as necessary
+
+  tasks:
+    - name: Install Tomcat dependencies
+      apt:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - curl
+        - tar
+        - openjdk-8-jdk
+
+    - name: Create Tomcat group
+      ansible.builtin.group:
+        name: tomcat
+        state: present
+
+    - name: Create Tomcat user
+      ansible.builtin.user:
+        name: tomcat
+        group: tomcat
+        home: "{{ tomcat_install_dir }}"
+        shell: /bin/false
+        state: present
+
+    - name: Download Tomcat using curl
+      command: >
+        curl -L -o /tmp/apache-tomcat-{{ tomcat_version }}.tar.gz
+        https://archive.apache.org/dist/tomcat/tomcat-9/v{{ tomcat_version }}/bin/apache-tomcat-{{ tomcat_version }}.tar.gz
+
+    - name: Create Tomcat installation directory
+      ansible.builtin.file:
+        path: "{{ tomcat_install_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Extract Tomcat
+      ansible.builtin.unarchive:
+        src: "/tmp/apache-tomcat-{{ tomcat_version }}.tar.gz"
+        dest: "{{ tomcat_install_dir }}"
+        remote_src: yes
+        creates: "{{ tomcat_install_dir }}/apache-tomcat-{{ tomcat_version }}"
+
+    - name: Set permissions on Tomcat installation directory
+      ansible.builtin.command:
+        cmd: chown -R tomcat:tomcat {{ tomcat_install_dir }}
+
+    - name: Create systemd service file for Tomcat
+      ansible.builtin.copy:
+        content: |
+          [Unit]
+          Description=Apache Tomcat
+          After=network.target
+
+          [Service]
+          Type=forking
+          User=tomcat
+          Group=tomcat
+          Environment="JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64"
+          Environment="CATALINA_PID={{ tomcat_install_dir }}/apache-tomcat-{{ tomcat_version }}/temp/tomcat.pid"
+          Environment="CATALINA_HOME={{ tomcat_install_dir }}/apache-tomcat-{{ tomcat_version }}"
+          Environment="CATALINA_BASE={{ tomcat_install_dir }}/apache-tomcat-{{ tomcat_version }}"
+          ExecStart={{ tomcat_install_dir }}/apache-tomcat-{{ tomcat_version }}/bin/startup.sh
+          ExecStop={{ tomcat_install_dir }}/apache-tomcat-{{ tomcat_version }}/bin/shutdown.sh
+          Restart=on-failure
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/tomcat.service
+        mode: '0644'
+
+    - name: Reload systemd daemon
+      ansible.builtin.command:
+        cmd: systemctl daemon-reload
+
+    - name: Start and enable Tomcat service
+      ansible.builtin.systemd:
+        name: tomcat
+        state: started
+        enabled: yes
